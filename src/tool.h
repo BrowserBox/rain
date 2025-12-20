@@ -1,5 +1,7 @@
 #pragma once
-#define VERSION "3.7.1"
+#ifndef VERSION
+#define VERSION "3.8.0"
+#endif
 #include <atomic> // for std::atomic
 #include <iostream>
 #include <array>
