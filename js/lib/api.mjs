@@ -645,6 +645,9 @@ async function loadRain() {
     rain = x.default;
     rain.loaded = true;
 
+    // Note: HEAPU8, getValue, etc. should already be properties of the Module object
+    // after WASM initialization. The Emscripten-generated code makes them available.
+
     const { cwrap } = rain;
 
     // Wrap rainstormHash functions

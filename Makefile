@@ -2,21 +2,25 @@
 CXX = /opt/homebrew/opt/llvm/bin/clang++
 EMCC = emcc
 
+# Extract version from package.json
+VERSION := $(shell node -p "require('./js/package.json').version" 2>/dev/null || echo "3.8.0")
+
 # Flags
-CXXFLAGS = -std=c++20 -Wall -Wextra -pedantic -O3 -march=native -mtune=native
+CXXFLAGS = -std=c++20 -Wall -Wextra -pedantic -O3 -march=native -mtune=native -DVERSION=\"$(VERSION)\"
 #CXXFLAGS = -std=c++20 -Wall -Wextra -pedantic -O0 -fsanitize=address,undefined -march=native
 #CXXFLAGS = -std=c++20 -Wall -Wextra -pedantic -O0 -g 
 CXXFLAGS += -isysroot $(shell xcrun --show-sdk-path)
 CXXFLAGS += -fopenmp -I/opt/homebrew/opt/llvm/include
 DEPFLAGS = -MMD -MF $(@:.o=.d)
 
-LDFLAGS = -fopenmp -L/opt/homebrew/opt/llvm/lib -lz -lc++
+LDFLAGS = -fopenmp -L/opt/homebrew/opt/llvm/lib -L/opt/homebrew/opt/llvm/lib/c++ -Wl,-rpath,/opt/homebrew/opt/llvm/lib/c++ -lz -lc++
 
 # Emscripten Flags for WASM
 # Include your new bridging funcs in EXPORTED_FUNCTIONS:
 EMCCFLAGS = -O2 -s WASM=1 \
+  -DVERSION=\"$(VERSION)\" \
   -s EXPORTED_FUNCTIONS="['_rainbowHash64','_rainbowHash128','_rainbowHash256','_rainstormHash64', '_rainstormHash128', '_rainstormHash256', '_rainstormHash512', 'stringToUTF8','UTF8ToString', 'lengthBytesUTF8','_malloc','_free','_wasmGetFileHeaderInfo','_wasmFree', '_wasmStreamEncryptBuffer', '_wasmStreamDecryptBuffer', '_wasmFreeBuffer', '_wasmCreateHMAC', '_wasmVerifyHMAC']" \
-  -s EXPORTED_RUNTIME_METHODS="['wasmExports','ccall','cwrap', 'getValue']" \
+  -s EXPORTED_RUNTIME_METHODS="['wasmExports','ccall','cwrap', 'getValue', 'HEAPU8', 'HEAPU32', 'HEAP32', 'UTF8ToString', 'stringToUTF8', 'lengthBytesUTF8']" \
   -s WASM_BIGINT=1 \
   -s ALLOW_MEMORY_GROWTH=1 \
 	-s USE_ZLIB=1 \
@@ -97,5 +101,7 @@ install: rainsum
 clean:
 	rm -rf $(OBJDIR) $(BUILDDIR) rainsum \
 	  $(WASMDIR) js/node_modules scripts/node_modules \
-	  $(WASM_OUTPUT) $(JS_OUTPUT)
+	  $(WASM_OUTPUT) $(JS_OUTPUT) \
+	  test.log test-file.* *.rc *.rc.* \
+	  docs/rain.html
 
