@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <cstdio>
+#include <algorithm>
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
@@ -74,14 +75,23 @@ namespace rainbow {
     s[1] = b; s[2] = a;
   }
 
-  // Streaming state structure if needed (mirroring your original style)
+  // Streaming state. Semantically IDENTICAL to the single-call rainbow()
+  // below: initialize with the TOTAL input length (the state is length-keyed),
+  // feed the bytes through update() in any chunking, then finalize().
+  // Verified against the single-call path and the published vectors by
+  // src/streaming-test.cpp (make test-streaming).
+  //
+  // History: this struct used to be dead code whose update() ran the
+  // finalization tail on its first call, so a second update() was silently
+  // ignored. Fixed 2026-07-27; the single-call template is unchanged and
+  // remains the definition of the hash.
   struct HashState : IHashState {
     uint64_t  h[4];
     seed_t    seed;
-    size_t    len;
     uint32_t  hashsize;
     bool      inner = false;
-    bool      final_block = false;
+    uint8_t   pending[16];
+    size_t    pending_len = 0;
     bool      finalized = false;
 
     static HashState initialize(const seed_t seed, size_t olen, uint32_t hashsize) {
@@ -93,68 +103,78 @@ namespace rainbow {
       state.len = 0;
       state.seed = seed;
       state.hashsize = hashsize;
+      state.inner = false;
+      state.pending_len = 0;
+      state.finalized = false;
       return state;
     }
 
-    void update(const uint8_t* chunk, size_t chunk_len) {
-      while (chunk_len >= 16) {
-        uint64_t g = GET_U64<false>(chunk, 0);
-
-        h[0] -= g;
-        h[1] += g;
-        chunk += 8;
-
-        g = GET_U64<false>(chunk, 0);
-        h[2] += g;
-        h[3] -= g;
-
-        if (inner) {
-          mixB(h, seed);
-          rotate_right(h);
-        } else {
-          mixA(h);
-        }
-        inner = !inner;
-
-        chunk += 8;
-        chunk_len -= 16;
-        len += 16;
+    void ingest_block(const uint8_t* block) {
+      uint64_t g = GET_U64<false>(block, 0);
+      h[0] -= g;
+      h[1] += g;
+      g = GET_U64<false>(block, 8);
+      h[2] += g;
+      h[3] -= g;
+      if (inner) {
+        mixB(h, seed);
+        rotate_right(h);
+      } else {
+        mixA(h);
       }
+      inner = !inner;
+    }
 
-      // Process any remaining data
-      // According to Frank's logic, if there's any remainder it's the final block
-      if (chunk_len >= 0) {
-        final_block = true;
-        mixB(h, seed);
-
-        switch (chunk_len) {
-          case 15: h[0] += (uint64_t)chunk[14] << 56; // [[fallthrough]];
-          case 14: h[1] += (uint64_t)chunk[13] << 48; // [[fallthrough]]
-          case 13: h[2] += (uint64_t)chunk[12] << 40; // [[fallthrough]]
-          case 12: h[3] += (uint64_t)chunk[11] << 32; // [[fallthrough]]
-          case 11: h[0] += (uint64_t)chunk[10] << 24; // [[fallthrough]]
-          case 10: h[1] += (uint64_t)chunk[9]  << 16; // [[fallthrough]]
-          case  9: h[2] += (uint64_t)chunk[8]  << 8;  // [[fallthrough]]
-          case  8: h[3] += chunk[7];                  //  [[fallthrough]]
-          case  7: h[0] += (uint64_t)chunk[6]  << 48; // [[fallthrough]]
-          case  6: h[1] += (uint64_t)chunk[5]  << 40; // [[fallthrough]]
-          case  5: h[2] += (uint64_t)chunk[4]  << 32; // [[fallthrough]]
-          case  4: h[3] += (uint64_t)chunk[3]  << 24; // [[fallthrough]]
-          case  3: h[0] += (uint64_t)chunk[2]  << 16; // [[fallthrough]]
-          case  2: h[1] += (uint64_t)chunk[1]  <<  8; // [[fallthrough]]
-          case  1: h[2] += (uint64_t)chunk[0];
+    void update(const uint8_t* chunk, size_t chunk_len) {
+      if (finalized) return;
+      this->len += chunk_len;
+      if (pending_len > 0) {
+        size_t take = std::min((size_t)(16 - pending_len), chunk_len);
+        memcpy(pending + pending_len, chunk, take);
+        pending_len += take;
+        chunk += take;
+        chunk_len -= take;
+        if (pending_len == 16) {
+          ingest_block(pending);
+          pending_len = 0;
         }
-
-        mixA(h);
-        mixB(h, seed);
-        mixA(h);
-
-        len += chunk_len;
+      }
+      while (chunk_len >= 16) {
+        ingest_block(chunk);
+        chunk += 16;
+        chunk_len -= 16;
+      }
+      if (chunk_len > 0) {
+        memcpy(pending, chunk, chunk_len);
+        pending_len = chunk_len;
       }
     }
 
     void finalize(void* out) {
       if (finalized) return;
+      // the tail, exactly as the single-call path: mixB, ingest the 0..15
+      // remainder bytes at their length-determined lanes, then mixA/mixB/mixA
+      mixB(h, seed);
+      switch (pending_len) {
+        case 15: h[0] += (uint64_t)pending[14] << 56; // [[fallthrough]]
+        case 14: h[1] += (uint64_t)pending[13] << 48; // [[fallthrough]]
+        case 13: h[2] += (uint64_t)pending[12] << 40; // [[fallthrough]]
+        case 12: h[3] += (uint64_t)pending[11] << 32; // [[fallthrough]]
+        case 11: h[0] += (uint64_t)pending[10] << 24; // [[fallthrough]]
+        case 10: h[1] += (uint64_t)pending[9]  << 16; // [[fallthrough]]
+        case  9: h[2] += (uint64_t)pending[8]  << 8;  // [[fallthrough]]
+        case  8: h[3] += pending[7];                  // [[fallthrough]]
+        case  7: h[0] += (uint64_t)pending[6]  << 48; // [[fallthrough]]
+        case  6: h[1] += (uint64_t)pending[5]  << 40; // [[fallthrough]]
+        case  5: h[2] += (uint64_t)pending[4]  << 32; // [[fallthrough]]
+        case  4: h[3] += (uint64_t)pending[3]  << 24; // [[fallthrough]]
+        case  3: h[0] += (uint64_t)pending[2]  << 16; // [[fallthrough]]
+        case  2: h[1] += (uint64_t)pending[1]  <<  8; // [[fallthrough]]
+        case  1: h[2] += pending[0];
+      }
+      mixA(h);
+      mixB(h, seed);
+      mixA(h);
 
       uint64_t g = 0;
       g -= h[2];

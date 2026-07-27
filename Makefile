@@ -34,7 +34,7 @@ BUILDDIR = rain/bin
 WASMDIR = js/wasm
 
 # Sources and Outputs
-SRCS = $(wildcard src/*.cpp)
+SRCS = $(filter-out src/streaming-test.cpp,$(wildcard src/*.cpp))
 OBJS = $(addprefix $(OBJDIR)/,$(notdir $(SRCS:.cpp=.o)))
 DEPS = $(OBJS:.o=.d)
 
@@ -63,6 +63,11 @@ ${WASMDIR}:
 node_modules:
 	@(test ! -d ./js/node_modules && cd js && npm i && cd ..) || :
 	@(test ! -d ./scripts/node_modules && cd scripts && npm i && cd ..) || :
+
+# Streaming-vs-single-call equivalence test (see src/streaming-test.cpp)
+test-streaming: ${BUILDDIR}
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) -o $(BUILDDIR)/streaming-test src/streaming-test.cpp
+	$(BUILDDIR)/streaming-test
 
 # Build Executable (C++ native)
 rainsum: $(OBJS)
