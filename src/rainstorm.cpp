@@ -80,106 +80,99 @@ namespace rainstorm {
   }
   */
 
+  // Streaming state. Semantically IDENTICAL to the single-call rainstorm()
+  // below: initialize with the TOTAL input length (the state is length-keyed),
+  // feed the bytes through update() in any chunking, then finalize().
+  // Verified against the single-call path and the published vectors by
+  // src/streaming-test.cpp (make test-streaming).
+  //
+  // History: this struct used to be dead code with two defects. Its h[2] init
+  // constant duplicated h[1]'s (+2 twice, shifting the sequence to end at +43
+  // where the single-call template ends at +47), and update() ran the
+  // finalization tail on its first call, so a second update() was silently
+  // ignored. Both fixed 2026-07-27; the single-call template — the path the
+  // CLI, the WASM port, and SMHasher3 all use — is unchanged and remains the
+  // definition of the hash.
   struct HashState : IHashState {
-    uint64_t  start[16];
     uint64_t  h[16];
+    uint64_t  temp[8];       // the final rounds mix over the last (padded) block
     seed_t    seed;
-    size_t    len;             
     size_t    olen;
     uint32_t  hashsize;
-    bool      inner = 0;
-    bool      final_block = false;
+    uint8_t   pending[64];
+    size_t    pending_len = 0;
     bool      finalized = false;
 
     static HashState initialize(const seed_t seed, size_t olen, uint32_t hashsize) {
       HashState state;
-
-      state.h[0]  = state.start[0] = seed + olen + 1;
-      state.h[1]  = state.start[1] = seed + olen + 2;
-      state.h[2]  = state.start[2] = seed + olen + 2;
-      state.h[3]  = state.start[3] = seed + olen + 3;
-      state.h[4]  = state.start[4] = seed + olen + 5;
-      state.h[5]  = state.start[5] = seed + olen + 7;
-      state.h[6]  = state.start[6] = seed + olen + 11;
-      state.h[7]  = state.start[7] = seed + olen + 13;
-      state.h[8]  = state.start[8] = seed + olen + 17;
-      state.h[9]  = state.start[9] = seed + olen + 19;
-      state.h[10] = state.start[10] = seed + olen + 23;
-      state.h[11] = state.start[11] = seed + olen + 29;
-      state.h[12] = state.start[12] = seed + olen + 31;
-      state.h[13] = state.start[13] = seed + olen + 37;
-      state.h[14] = state.start[14] = seed + olen + 41;
-      state.h[15] = state.start[15] = seed + olen + 43;
-
-      state.len = 0;  
+      static const uint64_t primes[16] = { 1, 2, 3, 5, 7, 11, 13, 17,
+                                           19, 23, 29, 31, 37, 41, 43, 47 };
+      for (int i = 0; i < 16; i++) {
+        state.h[i] = seed + olen + primes[i];
+      }
+      state.len = 0;
       state.seed = seed;
       state.olen = olen;
       state.hashsize = hashsize;
+      state.pending_len = 0;
+      state.finalized = false;
       return state;
     }
 
-    void update(const uint8_t* chunk, size_t chunk_len) {
-      uint64_t temp[8];
-      if (this->final_block) {
-        // can't update after final block
-        return;
+    void ingest_block(const uint8_t* block) {
+      for (int i = 0, j = 0; i < 8; ++i, j += 8) {
+        temp[i] = GET_U64<false>(block, j);
       }
+      for (int i = 0; i < ROUNDS; i++) {
+        weakfunc(this->h, temp, i & 1);
+      }
+    }
 
+    void update(const uint8_t* chunk, size_t chunk_len) {
+      if (finalized) return;
+      this->len += chunk_len;
+      if (pending_len > 0) {
+        size_t take = std::min((size_t)(64 - pending_len), chunk_len);
+        memcpy(pending + pending_len, chunk, take);
+        pending_len += take;
+        chunk += take;
+        chunk_len -= take;
+        if (pending_len == 64) {
+          ingest_block(pending);
+          pending_len = 0;
+        }
+      }
       while (chunk_len >= 64) {
-        for (int i = 0, j = 0; i < 8; ++i, j += 8) {
-          temp[i] = GET_U64<false>(chunk, j);
-        }
-
-        for (int i = 0; i < ROUNDS; i++) {
-          weakfunc(this->h, temp, i & 1);
-        }
-
-        //compress1(this->h, this->start, seed);
-
+        ingest_block(chunk);
         chunk += 64;
         chunk_len -= 64;
-        this->len += 64;
       }
-
-      if (chunk_len >= 0 || this->olen == 0) {
-        // Pad the remaining data
-        memset(temp, (0x80 + chunk_len) & 255, sizeof(temp));
-        memcpy(temp, chunk, chunk_len);
-        // Frank's fix: Don't perform the length encoding that can cause issues:
-        // temp[lenRemaining >> 3] |= (uint64_t)(lenRemaining << ((lenRemaining&7)*8)); 
-        // was removed in Frank's code.
-
-        //compress1(this->h, this->start, seed);
-
-        for (int i = 0; i < ROUNDS; i++) {
-          weakfunc(this->h, temp, i & 1);
-        }
-
-        for (int i = 0, j = 8; i < 8; i++, j++) {
-          h[i] -= h[j];
-        }
-
-        // If hashsize > 64, do final rounds as Frank does:
-        if (hashsize > 64) {
-          for (int i = 0; i < std::max((int)hashsize / 64, FINAL_ROUNDS); i++) {
-            weakfunc(h, temp, true);
-          }
-        }
-
-        this->len += chunk_len;
-        this->final_block = true;
+      if (chunk_len > 0) {
+        memcpy(pending, chunk, chunk_len);
+        pending_len = chunk_len;
       }
     }
 
     void finalize(void* out) {
-      if (finalized) {
-        return;
+      if (finalized) return;
+      // the tail block: remainder bytes over a (0x80 + remainder)-filled pad,
+      // exactly as the single-call path pads its final block
+      memset(temp, (0x80 + pending_len) & 255, sizeof(temp));
+      memcpy(temp, pending, pending_len);
+      for (int i = 0; i < ROUNDS; i++) {
+        weakfunc(h, temp, i & 1);
       }
-
-      for (int i = 0, j = 0; i < std::min((int)8, (int)this->hashsize / 64); i++, j += 8) {
+      for (int i = 0, j = 8; i < 8; i++, j++) {
+        h[i] -= h[j];
+      }
+      if (hashsize > 64) {
+        for (int i = 0; i < std::max((int)hashsize / 64, FINAL_ROUNDS); i++) {
+          weakfunc(h, temp, true);
+        }
+      }
+      for (uint32_t i = 0, j = 0; i < std::min((uint32_t)8, hashsize / 64); i++, j += 8) {
         PUT_U64<false>(h[i], (uint8_t *)out, j);
       }
-
       finalized = true;
     }
   };
