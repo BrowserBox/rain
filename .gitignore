@@ -7,3 +7,4 @@ test.log
 rain/**/*
 rainsum
 .*.swp
+node_modules/

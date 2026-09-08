@@ -1,6 +1,5 @@
-#define __STORMVERSION__ "3.7.1"
-// v2 is NIS2-v1 - non invertible state, v1 - passess all normal smhasher tests. BadSeeds not tested yet.
-// includes a compress step on each ingest to make it harder to invert the state even given knowledge of it
+#define __STORMVERSION__ "4.0.0"
+// v4 corrects the right-round counter wraparound; digests differ from v3.
 
 #include <cstdint>
 #include <cstdlib>
@@ -66,7 +65,9 @@ namespace rainstorm {
         h[j] ^= h[i];               // blit low 512
 
         ctr += h[i];                
-        h[(k & 7) + 8] -= ctr;      
+        // Cross into the other half on the last step, just as the left round does.
+        // Wrapping to h[8] instead cancels one word of incoming state information.
+        h[i == 15 ? 0 : i + 1] -= ctr;
       }
     }
   }
