@@ -1,6 +1,6 @@
 #pragma once
 #ifndef VERSION
-#define VERSION "3.8.0"
+#define VERSION "4.0.0"
 #endif
 #include <atomic> // for std::atomic
 #include <iostream>
@@ -864,5 +864,4 @@ void hashAnything(Mode mode, HashAlgorithm algot, const std::string& inpath,
     
     return output;
   }
-
 

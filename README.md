@@ -6,7 +6,28 @@
 >  find . -type f -print0 | xargs -0 -I{} rainsum {}
 > ```
 
-This repository features the **Rainbow** and **Rainstorm** hash functions (collectively, **Rain Hashes**), created by [Cris](https://github.com/o0101) at [DOSAYGO](https://github.com/dosyago) and licensed under Apache-2.0. All size variants of both hashes pass **all tests in SMHasher3**. Relevant [results](results) are available in the `results/` directory, or at the [SMHasher3 GitLab repository](https://gitlab.com/fwojcik/smhasher3/-/blob/main/results/README.md). The CLI tool API is similar to standard tools like `sha256sum`, but with more switches to select algorithm and digest length. The hashes produce digests ranging from 64 through to 512 bits wide. See the table below for details.
+This repository features the **Rainbow** and **Rainstorm** hash functions (collectively, **Rain Hashes**), created by [Cris](https://github.com/o0101) at [DOSAYGO](https://github.com/dosyago) and licensed under Apache-2.0. Version-specific [results](results) are available in the `results/` directory, or at the [SMHasher3 GitLab repository](https://gitlab.com/fwojcik/smhasher3/-/blob/main/results/README.md). The CLI tool API is similar to standard tools like `sha256sum`, but with more switches to select algorithm and digest length. The hashes produce digests ranging from 64 through to 512 bits wide. See the table below for details.
+
+### Rainstorm 4.0.0: counter wraparound correction
+
+Rainstorm's right round now subtracts its final counter from `h[0]`, rather than
+wrapping to `h[8]`. This adopts the cross-half wraparound proposed by
+[@under-my-pillow in issue #161](https://github.com/DOSAYGO-STUDIO/rain/issues/161).
+The old index caused an exact 64-bit loss of incoming state information in each
+right round for a fixed block. The corrected round is invertible for a fixed
+block. This removes that chosen-state collision construction; it is not a proof
+of full-hash cryptographic security, and no valid-message collision is claimed.
+
+**Compatibility:** Rainstorm digests change at every output size. Rainstorm-derived
+MACs, keys and ciphertext are also incompatible with previous releases. Keep a
+matching older release to verify old digests or decrypt old Rainstorm ciphertext.
+Rainbow digests are unchanged. Current [test vectors](js/test-vectors.json) cover
+all digest sizes; native and WASM implementations are checked against them.
+
+The promoted implementation (candidate A) passed **253/253 checks** in the full
+extended SMHasher3 **256-bit native** campaign, including BadSeeds. This result
+does not cover a full 512-bit SMHasher3 run: that suite supports widths only
+through 256 bits. See the [v4 validation and analysis notes](results/rainstorm-4.0.0/README.md).
 
 The codebase includes:
 
@@ -396,4 +417,3 @@ The responsibility for the use or misuse of this software lies entirely with the
 
 
 ---
-

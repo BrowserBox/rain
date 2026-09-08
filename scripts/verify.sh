@@ -1,23 +1,8 @@
-#!/bin/bash
-
-# Run the vectors script and save the output
-./scripts/vectors.sh > actual_output.txt
-
-valid=False
-# Compare the actual output to the expected output
-if diff -Z verification/vectors.txt actual_output.txt >/dev/null ; then
-    echo "The outputs match."
-    valid=True
-else
-    echo "The outputs do not match:"
-    diff verification/vectors.txt actual_output.txt
-fi
-
-# Clean up
-rm actual_output.txt
-
-if $valid ; then
-  exit 0
-else
-  exit 1
-fi
+#!/usr/bin/env bash
+set -euo pipefail
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
+actual=$(mktemp -t rain-vectors.XXXXXXXX)
+trap 'rm -f -- "$actual"' EXIT
+./scripts/vectors.sh > "$actual"
+diff -u verification/vectors.txt "$actual"
+echo "The native and JavaScript/WASM vectors match."

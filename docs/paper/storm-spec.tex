@@ -12,7 +12,7 @@
   citecolor=blue
 }
 
-\title{The Rainstorm Hash Function: Formal Specification (Draft)}
+\title{The Rainstorm 4.0.0 Hash Function: Specification (Draft)}
 \author{Cris (DOSAYGO Corp.), 2023}
 \date{\today}
 
@@ -65,22 +65,22 @@ Define:
 \[
 c_0 = 1,\quad
 c_1 = 2,\quad
-c_2 = 2,\quad
-c_3 = 3,\quad
-c_4 = 5,\quad
-c_5 = 7,\quad
-c_6 = 11,\quad
-c_7 = 13,
+c_2 = 3,\quad
+c_3 = 5,\quad
+c_4 = 7,\quad
+c_5 = 11,\quad
+c_6 = 13,\quad
+c_7 = 17,
 \]
 \[
-c_8 = 17,\quad
-c_9 = 19,\quad
-c_{10} = 23,\quad
-c_{11} = 29,\quad
-c_{12} = 31,\quad
-c_{13} = 37,\quad
-c_{14} = 41,\quad
-c_{15} = 43.
+c_8 = 19,\quad
+c_9 = 23,\quad
+c_{10} = 29,\quad
+c_{11} = 31,\quad
+c_{12} = 37,\quad
+c_{13} = 41,\quad
+c_{14} = 43,\quad
+c_{15} = 47.
 \]
 
 Then:
@@ -97,7 +97,7 @@ data[i] = \text{LE\_decode\_64}(B[8i : 8i+7]), \quad i=0,\ldots,7.
 The output is produced in little-endian format for each 64-bit word of $h$.
 
 \section*{Rounds and Weak Function}
-For each 64-byte chunk, Rainstorm performs 4 rounds of an internal function $\text{weakfunc}(h, data, left)$. The boolean $left$ is toggled each round.
+Each 64-byte chunk receives four calls to the weak function, in the order right, left, right, left.
 
 Define $\text{ROTR}(x,n)$ as the 64-bit rotate-right operation on $x$ by $n$ bits.
 
@@ -119,7 +119,7 @@ h[i] \leftarrow \text{ROTR}(h[i], Z[i])
 \[
 h[i+8] \leftarrow h[i+8] \oplus h[i], \quad
 ctr \leftarrow ctr + h[i], \quad
-h[(i+1)\bmod 8] \leftarrow h[(i+1)\bmod 8] - ctr
+h[i+1] \leftarrow h[i+1] - ctr
 \]
 
 \textit{If $left = \text{false}$:}
@@ -135,22 +135,31 @@ h[i] \leftarrow \text{ROTR}(h[i], Z[i-8])
 \[
 h[i-8] \leftarrow h[i-8] \oplus h[i], \quad
 ctr \leftarrow ctr + h[i], \quad
-h[((i-7)\bmod 8)+8] \leftarrow h[((i-7)\bmod 8)+8] - ctr
+h[(i+1)\bmod 16] \leftarrow h[(i+1)\bmod 16] - ctr
 \]
 
+In version 4.0.0, the final right-round subtraction targets $h[0]$, crossing
+into the other half just as the final left-round subtraction targets $h[8]$.
+Earlier code wrapped the right subtraction to $h[8]$, causing an exact
+64-bit loss of incoming state information for a fixed block. The correction
+changes digests at every output size. It removes that chosen-state collision
+construction, but does not establish full-hash cryptographic security.
+
 \section*{Padding}
-After processing all full 64-byte chunks, if any bytes remain, a final padded block is formed.
+After processing all full 64-byte chunks, a final padded block is always formed,
+including when no bytes remain.
 
 Let $r$ be the remaining length (0 to 63). Initialize a 64-byte array $temp$ with $(0x80 + r) \bmod 256$ in every byte, then overwrite the first $r$ bytes of $temp$ with the remaining data.
 
-No length encoding beyond this padding is performed.
+The total message length is incorporated in the initial state; no additional
+length field is appended to this padded block.
 
 Process this final block with 4 rounds of $\text{weakfunc}$, then:
 \[
 \text{for } i=0 \text{ to } 7:\quad h[i] \leftarrow h[i] - h[i+8].
 \]
 
-If $N > 64$ bits, perform $\max(N/64, 2)$ additional calls of $\text{weakfunc}(h, temp, true)$ to further mix the state.
+The finalization described below is then performed once.
 
 \section*{Output and Final Rounds}
 After processing the final padded block and performing the subtraction step
@@ -187,38 +196,39 @@ Each 64-bit word is written to the output buffer in little-endian byte order. No
 This finalization and extraction process ensures that for each supported output size, the resulting hash is fully defined by the preceding steps, including the additional final rounds for outputs greater than 64 bits.
 
 \section*{Empirical Results and Analysis Invitation}
-Rainstorm’s design choices were guided by empirical testing, including runs through \href{https://gitlab.com/fwojcik/smhasher3}{SMHasher3} (by Frank J. T. Wojcik). Tests indicate strong avalanche characteristics and minimal bias, suggesting that small changes in input bits produce large, unpredictable changes in output bits. Preliminary performance benchmarks show around 247 cycles per hash for small keys and bulk speeds of about 1.92 GiB/s at 3.5 GHz.
+Rainstorm's design choices were guided by empirical testing, including runs through \href{https://gitlab.com/fwojcik/smhasher3}{SMHasher3} (by Frank J. T. Wojcik). The promoted version 4.0.0 implementation passed all 253 checks in the full extended 256-bit native campaign, including BadSeeds. That suite does not instantiate 512-bit outputs. On the tested ARM cloud machine, the small-key measurement was 249.64 cycles per hash. Performance and passing statistics are not security proofs.
 
 These observations are encouraging but are not conclusive cryptographic proofs. Rainstorm has not been formally analyzed by the broader cryptographic community. Interested researchers and practitioners, whether new to cryptanalysis or established in the field, are invited to scrutinize Rainstorm’s construction, test it against known cryptographic attacks, and share their findings.
 
 \section*{Test Vectors}
 Below are sample test vectors (with $s=0$ and $N=256$):
 
+{\small
 \begin{verbatim}
 Message: ""
-Digest: e3ea5f8885f7bb16468d08c578f0e7cc15febd31c27e323a79ef87c35756ce1e
+Digest: bf6aa062a4c6ccf8b69697494100743f24da78e0e0140af278f3156772734b49
 
 Message: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-Digest: 9e07ce365903116b62ac3ac0a033167853853074313f443d5b372f0225eede50
+Digest: a3eeff6dbbf8213dd3b3b00a7ad813a76dc20f9c8ddb4424ee906bca3616e7b9
 
 Message: "The quick brown fox jumps over the lazy dog"
-Digest: f88600f4b65211a95c6817d0840e0fc2d422883ddf310f29fa8d4cbfda962626
+Digest: 2343e4baabecf8be423ab643fcdfa113e14bf75e7a5f8a6a37f02a260282ac45
 
 Message: "The quick brown fox jumps over the lazy cog"
-Digest: ec05208dd1fbf47b9539a761af723612eaa810762ab7a77b715fcfb3bf44f04a
+Digest: 336f151a152a50930cf47ac8a787f55bc37e711945cc1845ec1aa4c4fdb257d4
 
 Message: "The quick brown fox jumps over the lazy dog."
-Digest: 822578f80d46184a674a6069486b4594053490de8ddf343cc1706418e527bec8
+Digest: 638cce058cae9895f61c5c03a6d75e8c56a8d4a138a01d6bf60038d076e12177
 
 Message: "After the rainstorm comes the rainbow."
-Digest: 410427b981efa6ef884cd1f3d812c880bc7a37abc7450dd62803a4098f28d0f1
+Digest: 3ca3ed36a2503b5908d5deb596951a57b7dad37fc7d2dda756c91124acafdfd1
 
 Message: "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@"
-Digest: 47b5d8cb1df8d81ed23689936d2edaa7bd5c48f5bc463600a4d7a56342ac80b9
+Digest: 3cb0c1d4fd07567910057bf9a884651da54ae2117619b3c143e96870032eb5e3
 \end{verbatim}
+}
 
 \section*{Conclusion}
 This document provides a formal specification of Rainstorm’s design, constants, and processing steps, as well as initial empirical observations. The cryptographic community is invited to analyze Rainstorm for properties such as collision resistance, preimage resistance, and differential security. Only through public scrutiny and rigorous testing can Rainstorm be evaluated as a potential candidate for widespread cryptographic use.
 
 \end{document}
-

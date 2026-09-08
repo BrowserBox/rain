@@ -1,9 +1,9 @@
 # Compiler and Tools
 CXX = /opt/homebrew/opt/llvm/bin/clang++
-EMCC = emcc
+EMCC = em++
 
 # Extract version from package.json
-VERSION := $(shell node -p "require('./js/package.json').version" 2>/dev/null || echo "3.8.0")
+VERSION := $(shell node -p "require('./js/package.json').version" 2>/dev/null || echo "4.0.0")
 
 # Flags
 CXXFLAGS = -std=c++20 -Wall -Wextra -pedantic -O3 -march=native -mtune=native -DVERSION=\"$(VERSION)\"
@@ -109,4 +109,3 @@ clean:
 	  $(WASM_OUTPUT) $(JS_OUTPUT) \
 	  test.log test-file.* *.rc *.rc.* \
 	  docs/rain.html
-
